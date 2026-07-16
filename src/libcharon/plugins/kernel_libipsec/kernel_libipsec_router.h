@@ -22,7 +22,7 @@
 #ifndef KERNEL_LIBIPSEC_ROUTER_H_
 #define KERNEL_LIBIPSEC_ROUTER_H_
 
-#include <kernel/kernel_listener.h>
+#include "kernel_libipsec_plain.h"
 
 typedef struct kernel_libipsec_router_t kernel_libipsec_router_t;
 
@@ -31,11 +31,6 @@ typedef struct kernel_libipsec_router_t kernel_libipsec_router_t;
  * charon's IKE socket.
  */
 struct kernel_libipsec_router_t {
-
-	/**
-	 * Implements kernel_listener_t interface
-	 */
-	kernel_listener_t listener;
 
 	/**
 	 * Get the name of the TUN device to be used with the given virtual IP.
@@ -61,6 +56,7 @@ extern kernel_libipsec_router_t *router;
  *
  * @return			kernel_libipsec_router_t instance
  */
-kernel_libipsec_router_t *kernel_libipsec_router_create();
+kernel_libipsec_router_t *kernel_libipsec_router_create(
+										kernel_libipsec_plain_t *plain);
 
 #endif /** KERNEL_LIBIPSEC_ROUTER_H_ @}*/

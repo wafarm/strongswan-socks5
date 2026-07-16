@@ -6,6 +6,47 @@ charon.plugins.kernel-libipsec.allow_peer_ts = no
 	traffic. The fwmark options for the _kernel-netlink_ and _socket-default_
 	plugins can be used to circumvent that problem.
 
+charon.plugins.kernel-libipsec.data_plane = tun
+	Plaintext data plane to use. The default _tun_ backend creates TUN devices
+	and retains its existing behavior. The optional _socks5_ backend exposes a
+	loopback SOCKS5 TCP CONNECT proxy and does not create interfaces or routes.
+	The latter requires a build configured with
+	_--enable-kernel-libipsec-socks_, plus _install_routes = no_ and
+	_install_virtual_ip = no_.
+
+charon.plugins.kernel-libipsec.socks5.listen = tcp://127.0.0.1:1080
+	Literal IPv4 or IPv6 loopback address on which the SOCKS5 proxy listens.
+	IPv6 literals use brackets, for example _tcp://[::1]:1080_.
+
+charon.plugins.kernel-libipsec.socks5.ike
+	Optional IKE configuration name used to select the proxy tunnel.
+
+charon.plugins.kernel-libipsec.socks5.child
+	Optional CHILD configuration name used to select the proxy tunnel.
+
+charon.plugins.kernel-libipsec.socks5.source_addresses
+	Comma-separated inner source addresses, at most one per address family.
+	If unset, sources are derived from negotiated local virtual IPs and then
+	from singleton local traffic selectors.
+
+charon.plugins.kernel-libipsec.socks5.dns_servers
+	Comma-separated DNS server addresses. If unset, negotiated
+	_INTERNAL_IP4_DNS_ and _INTERNAL_IP6_DNS_ attributes are used. No host
+	resolver fallback is performed.
+
+charon.plugins.kernel-libipsec.socks5.mtu = 1400
+	MTU of the embedded IP interface. Values below the IPv6 minimum of 1280
+	are rejected.
+
+charon.plugins.kernel-libipsec.socks5.max_connections = 128
+	Maximum number of simultaneous proxy clients.
+
+charon.plugins.kernel-libipsec.socks5.handshake_timeout = 10s
+	Maximum time allowed to complete the SOCKS5 greeting and request.
+
+charon.plugins.kernel-libipsec.socks5.connect_timeout = 30s
+	Maximum time allowed for DNS resolution and the tunneled TCP handshake.
+
 charon.plugins.kernel-libipsec.fwmark = charon.plugins.socket-default.fwmark
 	Firewall mark to set on outbound raw ESP packets.
 

@@ -1,23 +1,21 @@
 /*
- * Copyright (C) 2012-2023 Tobias Brunner
- *
+ * Copyright (C) 2012-2026 Tobias Brunner
  * Copyright (C) secunet Security Networks AG
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
  * Free Software Foundation; either version 2 of the License, or (at your
- * option) any later version.  See <http://www.fsf.org/copyleft/gpl.txt>.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
- * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
- * for more details.
+ * option) any later version.
  */
 
 #include "kernel_libipsec_plugin.h"
 #include "kernel_libipsec_ipsec.h"
 #include "kernel_libipsec_router.h"
 #include "kernel_libipsec_esp_handler.h"
+#include "kernel_libipsec_tun.h"
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS
+#include "kernel_libipsec_socks.h"
+#endif
 
 #include <daemon.h>
 #include <ipsec.h>
@@ -27,30 +25,12 @@
 
 typedef struct private_kernel_libipsec_plugin_t private_kernel_libipsec_plugin_t;
 
-/**
- * private data of "kernel" libipsec plugin
- */
 struct private_kernel_libipsec_plugin_t {
-
-	/**
-	 * implements plugin interface
-	 */
 	kernel_libipsec_plugin_t public;
-
-	/**
-	 * TUN device created by this plugin
-	 */
 	tun_device_t *tun;
-
-	/**
-	 * Packet router
-	 */
 	kernel_libipsec_router_t *router;
-
-	/**
-	 * Raw ESP handler
-	 */
 	kernel_libipsec_esp_handler_t *esp_handler;
+	bool socks5;
 };
 
 METHOD(plugin_t, get_name, char*,
@@ -59,15 +39,29 @@ METHOD(plugin_t, get_name, char*,
 	return "kernel-libipsec";
 }
 
-/**
- * Create the kernel_libipsec_router_t instance
- */
 static bool create_router(private_kernel_libipsec_plugin_t *this,
 						  plugin_feature_t *feature, bool reg, void *arg)
 {
 	if (reg)
-	{	/* registers as packet handler etc. */
-		this->router = kernel_libipsec_router_create();
+	{
+		kernel_libipsec_plain_t *plain = NULL;
+
+		if (this->socks5)
+		{
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS
+			plain = kernel_libipsec_socks_create();
+#endif
+		}
+		else
+		{
+			plain = kernel_libipsec_tun_create();
+		}
+		this->router = kernel_libipsec_router_create(plain);
+		if (!this->router)
+		{
+			DESTROY_IF(plain);
+			return FALSE;
+		}
 	}
 	else
 	{
@@ -85,9 +79,18 @@ METHOD(plugin_t, get_features, int,
 		PLUGIN_CALLBACK((plugin_feature_callback_t)create_router, NULL),
 			PLUGIN_PROVIDE(CUSTOM, "kernel-libipsec-router"),
 				PLUGIN_DEPENDS(CUSTOM, "libcharon-receiver"),
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS
+				PLUGIN_DEPENDS(RNG, RNG_STRONG),
+#endif
 	};
+
 	*features = f;
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS
+	/* Keep the existing TUN backend independent of a strong RNG provider. */
+	return countof(f) - (this->socks5 ? 0 : 1);
+#else
 	return countof(f);
+#endif
 }
 
 METHOD(plugin_t, destroy, void,
@@ -107,16 +110,48 @@ METHOD(plugin_t, destroy, void,
 	free(this);
 }
 
-/*
- * see header file
- */
 PLUGIN_DEFINE(kernel_libipsec)
 {
 	private_kernel_libipsec_plugin_t *this;
+	char *data_plane;
+	bool socks5;
 
-	if (!lib->caps->check(lib->caps, CAP_NET_ADMIN))
-	{	/* required to create TUN devices */
-		DBG1(DBG_KNL, "kernel-libipsec plugin requires CAP_NET_ADMIN "
+	data_plane = lib->settings->get_str(lib->settings,
+						"%s.plugins.kernel-libipsec.data_plane", "tun", lib->ns);
+	if (streq(data_plane, "tun"))
+	{
+		socks5 = FALSE;
+	}
+	else if (streq(data_plane, "socks5"))
+	{
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS
+		socks5 = TRUE;
+#else
+		DBG1(DBG_KNL, "kernel-libipsec SOCKS5 data plane was not enabled "
+			 "at build time");
+		return NULL;
+#endif
+	}
+	else
+	{
+		DBG1(DBG_KNL, "unknown kernel-libipsec data plane '%s'", data_plane);
+		return NULL;
+	}
+
+	if (socks5 &&
+		(lib->settings->get_bool(lib->settings, "%s.install_routes", TRUE,
+								lib->ns) ||
+		 lib->settings->get_bool(lib->settings, "%s.install_virtual_ip", TRUE,
+								lib->ns)))
+	{
+		DBG1(DBG_KNL, "kernel-libipsec SOCKS5 data plane requires "
+			 "install_routes=no and install_virtual_ip=no");
+		return NULL;
+	}
+
+	if (!socks5 && !lib->caps->check(lib->caps, CAP_NET_ADMIN))
+	{
+		DBG1(DBG_KNL, "kernel-libipsec TUN data plane requires CAP_NET_ADMIN "
 			 "capability");
 		return NULL;
 	}
@@ -129,6 +164,7 @@ PLUGIN_DEFINE(kernel_libipsec)
 				.destroy = _destroy,
 			},
 		},
+		.socks5 = socks5,
 	);
 
 	if (!libipsec_init())
@@ -138,28 +174,31 @@ PLUGIN_DEFINE(kernel_libipsec)
 		return NULL;
 	}
 
-	this->tun = tun_device_create("ipsec%d");
-	if (!this->tun)
+	if (!socks5)
 	{
-		DBG1(DBG_KNL, "failed to create TUN device");
-		destroy(this);
-		return NULL;
-	}
-	if (!this->tun->set_mtu(this->tun, TUN_DEFAULT_MTU) ||
-		!this->tun->up(this->tun))
-	{
-		DBG1(DBG_KNL, "failed to configure TUN device");
-		destroy(this);
-		return NULL;
-	}
-	lib->set(lib, "kernel-libipsec-tun", this->tun);
+		this->tun = tun_device_create("ipsec%d");
+		if (!this->tun)
+		{
+			DBG1(DBG_KNL, "failed to create TUN device");
+			destroy(this);
+			return NULL;
+		}
+		if (!this->tun->set_mtu(this->tun, TUN_DEFAULT_MTU) ||
+			!this->tun->up(this->tun))
+		{
+			DBG1(DBG_KNL, "failed to configure TUN device");
+			destroy(this);
+			return NULL;
+		}
+		lib->set(lib, "kernel-libipsec-tun", this->tun);
 
-	/* set TUN device as default to install VIPs */
-	lib->settings->set_str(lib->settings, "%s.install_virtual_ip_on",
-						   this->tun->get_name(this->tun), lib->ns);
+		/* Set the default TUN device used to install virtual IPs. */
+		lib->settings->set_str(lib->settings, "%s.install_virtual_ip_on",
+							   this->tun->get_name(this->tun), lib->ns);
+	}
 
 	if (lib->settings->get_bool(lib->settings,
-						"%s.plugins.kernel-libipsec.raw_esp", FALSE, lib->ns))
+					"%s.plugins.kernel-libipsec.raw_esp", FALSE, lib->ns))
 	{
 		this->esp_handler = kernel_libipsec_esp_handler_create();
 		if (!this->esp_handler)

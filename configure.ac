@@ -226,6 +226,7 @@ ARG_ENABL_SET([kernel-pfkey],   [enable the PF_KEY kernel interface.])
 ARG_ENABL_SET([kernel-pfroute], [enable the PF_ROUTE kernel interface.])
 ARG_ENABL_SET([kernel-iph],     [enable the Windows IP Helper based networking backend.])
 ARG_ENABL_SET([kernel-libipsec],[enable the libipsec kernel interface.])
+ARG_ENABL_SET([kernel-libipsec-socks],[enable the SOCKS5 data plane for the libipsec kernel interface.])
 ARG_ENABL_SET([kernel-wfp],     [enable the Windows Filtering Platform IPsec backend.])
 ARG_DISBL_SET([socket-default], [disable default socket implementation for charon.])
 ARG_ENABL_SET([socket-dynamic], [enable dynamic socket implementation for charon])
@@ -421,6 +422,11 @@ fi
 
 if test x$xauth_generic_given = xfalse -a x$ikev1 = xfalse; then
 	xauth_generic=false;
+fi
+
+if test x$kernel_libipsec_socks = xtrue; then
+	kernel_libipsec=true;
+	libipsec=true;
 fi
 
 if test x$kernel_libipsec = xtrue; then
@@ -938,6 +944,10 @@ AC_COMPILE_IFELSE(
 	]
 )
 AM_CONDITIONAL(USE_WINDOWS, [test "x$windows" = xtrue])
+
+if test x$kernel_libipsec_socks = xtrue -a x$windows = xtrue; then
+	AC_MSG_ERROR([--enable-kernel-libipsec-socks is only supported on POSIX platforms])
+fi
 
 AC_MSG_CHECKING([for working __attribute__((packed))])
 AC_COMPILE_IFELSE(
@@ -1791,6 +1801,7 @@ AM_CONDITIONAL(USE_KERNEL_NETLINK, test x$kernel_netlink = xtrue)
 AM_CONDITIONAL(USE_KERNEL_PFKEY, test x$kernel_pfkey = xtrue)
 AM_CONDITIONAL(USE_KERNEL_PFROUTE, test x$kernel_pfroute = xtrue)
 AM_CONDITIONAL(USE_KERNEL_LIBIPSEC, test x$kernel_libipsec = xtrue)
+AM_CONDITIONAL(USE_KERNEL_LIBIPSEC_SOCKS, test x$kernel_libipsec_socks = xtrue)
 AM_CONDITIONAL(USE_KERNEL_WFP, test x$kernel_wfp = xtrue)
 AM_CONDITIONAL(USE_KERNEL_IPH, test x$kernel_iph = xtrue)
 AM_CONDITIONAL(USE_WHITELIST, test x$whitelist = xtrue)
@@ -1927,6 +1938,10 @@ AM_CONDITIONAL(USE_PY_TEST, test "x$PY_TEST" != x -a "x$TOX" = x)
 
 if test x$mediation = xtrue; then
 	AC_DEFINE([ME], [], [mediation extension support])
+fi
+if test x$kernel_libipsec_socks = xtrue; then
+	AC_DEFINE([USE_KERNEL_LIBIPSEC_SOCKS], [],
+			  [build the kernel-libipsec SOCKS5 data plane])
 fi
 if test x$capabilities = xlibcap -o x$capabilities = xnative; then
 	AC_DEFINE([CAPABILITIES], [], [capability dropping support])
@@ -2148,6 +2163,7 @@ AC_CONFIG_FILES([
 	src/libcharon/plugins/kernel_pfkey/Makefile
 	src/libcharon/plugins/kernel_pfroute/Makefile
 	src/libcharon/plugins/kernel_libipsec/Makefile
+	src/libcharon/plugins/kernel_libipsec/tests/Makefile
 	src/libcharon/plugins/kernel_wfp/Makefile
 	src/libcharon/plugins/kernel_iph/Makefile
 	src/libcharon/plugins/whitelist/Makefile

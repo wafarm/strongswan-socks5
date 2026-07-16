@@ -758,3 +758,7 @@ SUBDIRS += tests
 if USE_EAP_AKA_3GPP
   SUBDIRS += plugins/eap_aka_3gpp/tests
 endif
+
+if USE_KERNEL_LIBIPSEC_SOCKS
+  SUBDIRS += plugins/kernel_libipsec/tests
+endif

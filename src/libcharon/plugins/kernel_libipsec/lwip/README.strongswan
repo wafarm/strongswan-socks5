@@ -1,0 +1,26 @@
+lwIP source provenance
+======================
+
+This directory contains the subset of lwIP used by the optional
+kernel-libipsec SOCKS5 data plane.
+
+Upstream: https://github.com/lwip-tcpip/lwip
+Tag:      STABLE-2_2_1_RELEASE
+Commit:   77dcd25a72509eb83f72b033d219b1d40cd8eb95
+Archive:  https://codeload.github.com/lwip-tcpip/lwip/tar.gz/77dcd25a72509eb83f72b033d219b1d40cd8eb95
+SHA-256:  85a09ebe68c260d4876e800220588e5a0b624266c994cc25da978210c2813f14
+
+Only the headers and the NO_SYS IPv4/IPv6 TCP, UDP/DNS, ICMP, pbuf, netif,
+fragmentation and timer core are imported.  The socket/netconn APIs, Ethernet,
+DHCP and application sources are intentionally omitted from the build.
+
+Local security backport
+-----------------------
+
+src/core/tcp_in.c contains the bounds check proposed for Savannah bug #68143,
+"heap-buffer-overflow READ in tcp_get_next_optbyte() during TCP option
+parsing".  It terminates option parsing before an access at or beyond
+tcphdr_optlen.  This patch is required because plaintext packets delivered by
+libipsec are untrusted network input.
+
+The upstream license is reproduced in COPYING.

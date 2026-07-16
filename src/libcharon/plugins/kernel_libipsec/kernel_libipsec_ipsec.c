@@ -61,6 +61,11 @@ struct private_kernel_libipsec_ipsec_t {
 	 * Whether UDP encapsulation is required
 	 */
 	bool require_encap;
+
+	/**
+	 * Whether policy management may install kernel routes
+	 */
+	bool install_routes;
 };
 
 typedef struct exclude_route_t exclude_route_t;
@@ -410,7 +415,7 @@ static bool install_route(private_kernel_libipsec_ipsec_t *this,
 	host_t *src_ip;
 	bool is_virtual;
 
-	if (policy->direction != POLICY_OUT)
+	if (!this->install_routes || policy->direction != POLICY_OUT)
 	{
 		this->mutex->unlock(this->mutex);
 		return TRUE;
@@ -549,6 +554,10 @@ METHOD(kernel_ipsec_t, add_policy, status_t,
 	{
 		return status;
 	}
+	if (!this->install_routes)
+	{
+		return SUCCESS;
+	}
 	/* we track policies in order to install routes */
 	policy = create_policy_entry(id->src_ts, id->dst_ts, id->dir);
 
@@ -591,6 +600,10 @@ METHOD(kernel_ipsec_t, del_policy, status_t,
 										 id->src_ts, id->dst_ts, id->dir,
 										 data->type, data->sa, id->mark,
 										 data->prio);
+	if (!this->install_routes)
+	{
+		return status;
+	}
 
 	policy = create_policy_entry(id->src_ts, id->dst_ts, id->dir);
 
@@ -717,6 +730,12 @@ kernel_libipsec_ipsec_t *kernel_libipsec_ipsec_create()
 		.allow_peer_ts = lib->settings->get_bool(lib->settings,
 					"%s.plugins.kernel-libipsec.allow_peer_ts", FALSE, lib->ns),
 		.require_encap = !lib->get(lib, "kernel-libipsec-esp-handler"),
+		.install_routes =
+			lib->settings->get_bool(lib->settings, "%s.install_routes", TRUE,
+									lib->ns) &&
+			!streq(lib->settings->get_str(lib->settings,
+					"%s.plugins.kernel-libipsec.data_plane", "tun", lib->ns),
+				   "socks5"),
 	);
 
 	ipsec->events->register_listener(ipsec->events, &this->ipsec_listener);
