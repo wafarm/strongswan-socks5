@@ -227,6 +227,7 @@ ARG_ENABL_SET([kernel-pfroute], [enable the PF_ROUTE kernel interface.])
 ARG_ENABL_SET([kernel-iph],     [enable the Windows IP Helper based networking backend.])
 ARG_ENABL_SET([kernel-libipsec],[enable the libipsec kernel interface.])
 ARG_ENABL_SET([kernel-libipsec-socks],[enable the SOCKS5 data plane for the libipsec kernel interface.])
+ARG_ENABL_SET([kernel-libipsec-socks-portable],[enable the portable SOCKS5 runtime profile (implies kernel-libipsec-socks, charon, swanctl and vici).])
 ARG_ENABL_SET([kernel-wfp],     [enable the Windows Filtering Platform IPsec backend.])
 ARG_DISBL_SET([socket-default], [disable default socket implementation for charon.])
 ARG_ENABL_SET([socket-dynamic], [enable dynamic socket implementation for charon])
@@ -422,6 +423,38 @@ fi
 
 if test x$xauth_generic_given = xfalse -a x$ikev1 = xfalse; then
 	xauth_generic=false;
+fi
+
+# Runtime profiles remain opt-in and are not activated by --enable-all.
+if test x$kernel_libipsec_socks_portable_given = xfalse; then
+	kernel_libipsec_socks_portable=false;
+fi
+
+if test x$kernel_libipsec_socks_portable = xtrue; then
+	if test x$kernel_libipsec_socks_given = xtrue -a x$kernel_libipsec_socks = xfalse; then
+		AC_MSG_ERROR([--enable-kernel-libipsec-socks-portable conflicts with --disable-kernel-libipsec-socks])
+	fi
+	if test x$kernel_libipsec_given = xtrue -a x$kernel_libipsec = xfalse; then
+		AC_MSG_ERROR([--enable-kernel-libipsec-socks-portable conflicts with --disable-kernel-libipsec])
+	fi
+	if test x$libipsec_given = xtrue -a x$libipsec = xfalse; then
+		AC_MSG_ERROR([--enable-kernel-libipsec-socks-portable conflicts with --disable-libipsec])
+	fi
+	if test x$charon_given = xtrue -a x$charon = xfalse; then
+		AC_MSG_ERROR([--enable-kernel-libipsec-socks-portable conflicts with --disable-charon])
+	fi
+	if test x$swanctl_given = xtrue -a x$swanctl = xfalse; then
+		AC_MSG_ERROR([--enable-kernel-libipsec-socks-portable conflicts with --disable-swanctl])
+	fi
+	if test x$vici_given = xtrue -a x$vici = xfalse; then
+		AC_MSG_ERROR([--enable-kernel-libipsec-socks-portable conflicts with --disable-vici])
+	fi
+	kernel_libipsec_socks=true;
+	kernel_libipsec=true;
+	libipsec=true;
+	charon=true;
+	swanctl=true;
+	vici=true;
 fi
 
 if test x$kernel_libipsec_socks = xtrue; then
@@ -945,6 +978,9 @@ AC_COMPILE_IFELSE(
 )
 AM_CONDITIONAL(USE_WINDOWS, [test "x$windows" = xtrue])
 
+if test x$kernel_libipsec_socks_portable = xtrue -a x$windows = xtrue; then
+	AC_MSG_ERROR([--enable-kernel-libipsec-socks-portable is only supported on POSIX platforms])
+fi
 if test x$kernel_libipsec_socks = xtrue -a x$windows = xtrue; then
 	AC_MSG_ERROR([--enable-kernel-libipsec-socks is only supported on POSIX platforms])
 fi
@@ -1942,6 +1978,10 @@ fi
 if test x$kernel_libipsec_socks = xtrue; then
 	AC_DEFINE([USE_KERNEL_LIBIPSEC_SOCKS], [],
 			  [build the kernel-libipsec SOCKS5 data plane])
+fi
+if test x$kernel_libipsec_socks_portable = xtrue; then
+	AC_DEFINE([USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE], [],
+			  [build the portable kernel-libipsec SOCKS5 runtime profile])
 fi
 if test x$capabilities = xlibcap -o x$capabilities = xnative; then
 	AC_DEFINE([CAPABILITIES], [], [capability dropping support])

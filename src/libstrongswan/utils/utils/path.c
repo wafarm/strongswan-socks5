@@ -21,6 +21,7 @@
 #include <utils/chunk.h>
 
 #include <limits.h>
+#include <errno.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -161,6 +162,111 @@ bool path_absolute(const char *path)
 		return TRUE;
 	}
 	return FALSE;
+}
+
+/**
+ * Resolve and validate an executable candidate.
+ */
+#ifndef WIN32
+static char *resolve_executable(const char *candidate)
+{
+	char resolved[PATH_MAX];
+	struct stat st;
+
+	if (!realpath(candidate, resolved) || stat(resolved, &st) != 0)
+	{
+		return NULL;
+	}
+	if (!S_ISREG(st.st_mode))
+	{
+		errno = EACCES;
+		return NULL;
+	}
+	if (access(resolved, X_OK) != 0)
+	{
+		return NULL;
+	}
+	return strdup(resolved);
+}
+#endif /* !WIN32 */
+
+/*
+ * Described in header
+ */
+char *path_executable_dir(const char *argv0)
+{
+#ifdef WIN32
+	(void)argv0;
+	return NULL;
+#else
+	char *candidate, *executable, *dir;
+	const char *path, *start, *end;
+	size_t dirlen, namelen;
+
+	if (!argv0 || !*argv0)
+	{
+		errno = ENOENT;
+		return NULL;
+	}
+	if (strchr(argv0, DIRECTORY_SEPARATOR[0]))
+	{
+		executable = resolve_executable(argv0);
+		if (!executable)
+		{
+			return NULL;
+		}
+		dir = path_dirname(executable);
+		free(executable);
+		return dir;
+	}
+
+	path = getenv("PATH");
+	if (!path)
+	{
+		errno = ENOENT;
+		return NULL;
+	}
+	namelen = strlen(argv0);
+	for (start = path;; start = end + 1)
+	{
+		end = strchr(start, ':');
+		dirlen = end ? end - start : strlen(start);
+		if (dirlen > SIZE_MAX - namelen - 2)
+		{
+			errno = ENOMEM;
+			return NULL;
+		}
+		candidate = malloc(dirlen + namelen + 2);
+		if (!candidate)
+		{
+			return NULL;
+		}
+		if (dirlen)
+		{
+			memcpy(candidate, start, dirlen);
+			candidate[dirlen] = DIRECTORY_SEPARATOR[0];
+			memcpy(candidate + dirlen + 1, argv0, namelen + 1);
+		}
+		else
+		{
+			memcpy(candidate, argv0, namelen + 1);
+		}
+		executable = resolve_executable(candidate);
+		free(candidate);
+		if (executable)
+		{
+			dir = path_dirname(executable);
+			free(executable);
+			return dir;
+		}
+		if (!end)
+		{
+			break;
+		}
+	}
+	errno = ENOENT;
+	return NULL;
+#endif /* WIN32 */
 }
 
 /*

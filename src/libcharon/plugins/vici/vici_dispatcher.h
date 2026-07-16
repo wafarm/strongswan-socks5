@@ -54,6 +54,8 @@ typedef enum vici_operation_t vici_operation_t;
  */
 #ifdef WIN32
 # define VICI_DEFAULT_URI "tcp://127.0.0.1:4502"
+#elif defined(USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE)
+# define VICI_DEFAULT_URI "unix://charon.vici"
 #else
 # define VICI_DEFAULT_URI "unix://" IPSEC_PIDDIR "/charon.vici"
 #endif

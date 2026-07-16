@@ -50,6 +50,10 @@
 #include <library.h>
 #include <daemon.h>
 
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE
+#include <unistd.h>
+#endif
+
 typedef struct private_vici_plugin_t private_vici_plugin_t;
 
 /**
@@ -101,6 +105,13 @@ struct private_vici_plugin_t {
 	 * Generic debug logger
 	 */
 	vici_logger_t *logger;
+
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE
+	/**
+	 * URI of the service socket, retained so a local socket can be removed.
+	 */
+	char *uri;
+#endif
 };
 
 METHOD(plugin_t, get_name, char*,
@@ -124,6 +135,9 @@ static bool register_vici(private_vici_plugin_t *this,
 		this->dispatcher = vici_dispatcher_create(uri);
 		if (this->dispatcher)
 		{
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE
+			this->uri = strdup(uri);
+#endif
 			this->query = vici_query_create(this->dispatcher);
 			this->control = vici_control_create(this->dispatcher);
 			this->authority = vici_authority_create(this->dispatcher);
@@ -164,6 +178,14 @@ static bool register_vici(private_vici_plugin_t *this,
 		this->control->destroy(this->control);
 		this->query->destroy(this->query);
 		this->dispatcher->destroy(this->dispatcher);
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE
+		if (this->uri && strpfx(this->uri, "unix://"))
+		{
+			unlink(this->uri + strlen("unix://"));
+		}
+		free(this->uri);
+		this->uri = NULL;
+#endif
 	}
 	return TRUE;
 }

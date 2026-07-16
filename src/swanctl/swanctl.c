@@ -18,6 +18,7 @@
 #include "swanctl.h"
 #include "command.h"
 
+#include <errno.h>
 #include <unistd.h>
 
 #include <library.h>
@@ -97,6 +98,28 @@ int main(int argc, char *argv[])
 {
 	level_t level;
 	int status;
+	char *integrity_path = argv[0];
+
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE
+	char *dir;
+
+	dir = path_executable_dir(argv[0]);
+	if (!dir)
+	{
+		fprintf(stderr, "resolving executable '%s' failed: %s\n",
+				argv[0] ?: "", strerror(errno));
+		return SS_RC_INITIALIZATION_FAILED;
+	}
+	if (chdir(dir) != 0)
+	{
+		fprintf(stderr, "changing directory to '%s' failed: %s\n", dir,
+				strerror(errno));
+		free(dir);
+		return SS_RC_INITIALIZATION_FAILED;
+	}
+	free(dir);
+	integrity_path = "swanctl";
+#endif
 
 	status = command_init(argc, argv);
 	if (status)
@@ -104,12 +127,18 @@ int main(int argc, char *argv[])
 		return status;
 	}
 	atexit(cleanup);
-	if (!library_init(NULL, "swanctl"))
+	if (!library_init(
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE
+			getenv("STRONGSWAN_CONF") ? NULL : "strongswan.conf",
+#else
+			NULL,
+#endif
+			"swanctl"))
 	{
 		exit(SS_RC_LIBSTRONGSWAN_INTEGRITY);
 	}
 	if (lib->integrity &&
-		!lib->integrity->check_file(lib->integrity, "swanctl", argv[0]))
+		!lib->integrity->check_file(lib->integrity, "swanctl", integrity_path))
 	{
 		fprintf(stderr, "integrity check of swanctl failed\n");
 		exit(SS_RC_DAEMON_INTEGRITY);
@@ -120,7 +149,13 @@ int main(int argc, char *argv[])
 		exit(SS_RC_INITIALIZATION_FAILED);
 	}
 
-	swanctl_dir = strdup(getenv("SWANCTL_DIR") ?: SWANCTLDIR);
+	swanctl_dir = strdup(getenv("SWANCTL_DIR") ?:
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE
+			"."
+#else
+			SWANCTLDIR
+#endif
+			);
 
 	/* suppress log message when spawning threads by default */
 	level = dbg_default_get_level_group(DBG_JOB);

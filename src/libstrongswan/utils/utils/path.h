@@ -104,6 +104,17 @@ char *path_basename(const char *path);
 bool path_absolute(const char *path);
 
 /**
+ * Resolve an executable as the operating system would and return the directory
+ * containing the physical executable.  On POSIX systems, argv[0] may be an
+ * absolute path, a relative path containing '/', or a name searched for in
+ * PATH.  Symbolic links are resolved before determining the directory.
+ *
+ * @param argv0		argv[0] of the executable
+ * @return			allocated absolute directory, or NULL if resolution failed
+ */
+char *path_executable_dir(const char *argv0);
+
+/**
  * Creates a directory and all required parent directories.
  *
  * @param path		path to the new directory

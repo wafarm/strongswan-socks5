@@ -62,4 +62,4 @@ libstrongswan_kernel_libipsec_la_LIBADD = $(top_builddir)/src/libipsec/libipsec.
 
 libstrongswan_kernel_libipsec_la_LDFLAGS = -module -avoid-version
 
-EXTRA_DIST = lwip lwip_port
+EXTRA_DIST = README.md lwip lwip_port

@@ -18,6 +18,10 @@
 #define LWIP_IPV6_FORWARD               0
 #define LWIP_IPV6_REASS                 1
 #define LWIP_IPV6_FRAG                  1
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE
+/* Required on 64-bit targets where the reassembly helper exceeds the header. */
+#define IPV6_FRAG_COPYHEADER            1
+#endif
 #define IP_REASS_MAX_PBUFS              64
 #define MEMP_NUM_REASSDATA              16
 

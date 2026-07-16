@@ -23,6 +23,12 @@
 
 #include <time.h>
 
+#ifndef WIN32
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 /*******************************************************************************
  * object storage on lib
  */
@@ -1005,6 +1011,85 @@ START_TEST(test_path_absolute)
 }
 END_TEST
 
+#ifndef WIN32
+START_TEST(test_path_executable_dir)
+{
+	char tmp[] = "/tmp/strongswan-executable-XXXXXX";
+	char cwd[PATH_MAX], bin[PATH_MAX], executable[PATH_MAX];
+	char symlink_path[PATH_MAX], expected[PATH_MAX], missing[PATH_MAX];
+	char *dir, *old_path;
+	int fd;
+
+	ck_assert(getcwd(cwd, sizeof(cwd)) != NULL);
+	ck_assert(mkdtemp(tmp) != NULL);
+	/* Other tests may temporarily change the process umask. */
+	ck_assert_int_eq(chmod(tmp, 0700), 0);
+	ck_assert(snprintf(bin, sizeof(bin), "%s/bin with spaces", tmp) <
+			  sizeof(bin));
+	ck_assert_int_eq(mkdir(bin, 0700), 0);
+	ck_assert_int_eq(chmod(bin, 0700), 0);
+	ck_assert(snprintf(executable, sizeof(executable), "%s/test executable",
+					   bin) < sizeof(executable));
+	fd = open(executable, O_CREAT | O_WRONLY | O_TRUNC, 0700);
+	ck_assert(fd >= 0);
+	ck_assert_int_eq(fchmod(fd, 0700), 0);
+	close(fd);
+	ck_assert(realpath(bin, expected) != NULL);
+	ck_assert(snprintf(symlink_path, sizeof(symlink_path), "%s/launcher", tmp) <
+			  sizeof(symlink_path));
+	ck_assert_int_eq(symlink(executable, symlink_path), 0);
+
+	/* absolute invocation, including spaces */
+	dir = path_executable_dir(executable);
+	ck_assert(dir != NULL);
+	ck_assert_str_eq(dir, expected);
+	free(dir);
+
+	/* relative invocation containing a directory separator */
+	ck_assert_int_eq(chdir(tmp), 0);
+	dir = path_executable_dir("bin with spaces/test executable");
+	ck_assert(dir != NULL);
+	ck_assert_str_eq(dir, expected);
+	free(dir);
+
+	/* PATH lookup */
+	old_path = strdupnull(getenv("PATH"));
+	ck_assert_int_eq(setenv("PATH", bin, 1), 0);
+	dir = path_executable_dir("test executable");
+	ck_assert(dir != NULL);
+	ck_assert_str_eq(dir, expected);
+	free(dir);
+
+	/* a symlink resolves to the physical executable's directory */
+	dir = path_executable_dir(symlink_path);
+	ck_assert(dir != NULL);
+	ck_assert_str_eq(dir, expected);
+	free(dir);
+
+	/* missing paths fail for both direct and PATH-based invocation */
+	ck_assert(snprintf(missing, sizeof(missing), "%s/missing", tmp) <
+			  sizeof(missing));
+	ck_assert(path_executable_dir(missing) == NULL);
+	ck_assert(path_executable_dir("missing") == NULL);
+
+	ck_assert_int_eq(chdir(cwd), 0);
+	if (old_path)
+	{
+		ck_assert_int_eq(setenv("PATH", old_path, 1), 0);
+	}
+	else
+	{
+		ck_assert_int_eq(unsetenv("PATH"), 0);
+	}
+	free(old_path);
+	ck_assert_int_eq(unlink(symlink_path), 0);
+	ck_assert_int_eq(unlink(executable), 0);
+	ck_assert_int_eq(rmdir(bin), 0);
+	ck_assert_int_eq(rmdir(tmp), 0);
+}
+END_TEST
+#endif /* !WIN32 */
+
 /*******************************************************************************
  * time_printf_hook
  */
@@ -1422,6 +1507,12 @@ Suite *utils_suite_create()
 	tc = tcase_create("path_absolute");
 	tcase_add_loop_test(tc, test_path_absolute, 0, countof(path_data));
 	suite_add_tcase(s, tc);
+
+#ifndef WIN32
+	tc = tcase_create("path_executable_dir");
+	tcase_add_test(tc, test_path_executable_dir);
+	suite_add_tcase(s, tc);
+#endif
 
 	tc = tcase_create("printf_hooks");
 	tcase_add_loop_test(tc, test_time_printf_hook, 0, countof(time_data));

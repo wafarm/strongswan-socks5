@@ -41,7 +41,11 @@
 /**
  * PID file, in which charon stores its process id
  */
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE
+#define PID_FILE "charon.pid"
+#else
 #define PID_FILE IPSEC_PIDDIR "/charon.pid"
+#endif
 
 /**
  * Default user and group
@@ -58,6 +62,52 @@
  * Global reference to PID file (required to truncate, if undeletable)
  */
 static FILE *pidfile = NULL;
+
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE
+/**
+ * Enter the physical executable directory before initializing anything that
+ * may resolve a relative path.
+ */
+static bool enter_executable_dir(const char *argv0)
+{
+	char *dir;
+	int err;
+
+	dir = path_executable_dir(argv0);
+	if (!dir)
+	{
+		fprintf(stderr, "resolving executable '%s' failed: %s\n",
+				argv0 ?: "", strerror(errno));
+		return FALSE;
+	}
+	if (chdir(dir) != 0)
+	{
+		err = errno;
+		fprintf(stderr, "changing directory to '%s' failed: %s\n", dir,
+				strerror(err));
+		free(dir);
+		return FALSE;
+	}
+	free(dir);
+	return TRUE;
+}
+
+/**
+ * Install defaults for the portable SOCKS5 profile without replacing values
+ * explicitly loaded from strongswan.conf.
+ */
+static void set_portable_defaults(void)
+{
+	lib->settings->set_default_str(lib->settings,
+			"%s.plugins.kernel-libipsec.data_plane", "socks5", lib->ns);
+	lib->settings->set_default_str(lib->settings, "%s.install_routes", "no",
+			lib->ns);
+	lib->settings->set_default_str(lib->settings, "%s.install_virtual_ip", "no",
+			lib->ns);
+	lib->settings->set_default_str(lib->settings, "%s.port", "0", lib->ns);
+	lib->settings->set_default_str(lib->settings, "%s.port_nat_t", "0", lib->ns);
+}
+#endif /* USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE */
 
 /**
  * hook in library for debugging messages
@@ -117,6 +167,9 @@ static void run()
 					 "configuration");
 				if (lib->settings->load_files(lib->settings, lib->conf, FALSE))
 				{
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE
+					set_portable_defaults();
+#endif
 					charon->load_loggers(charon);
 					lib->plugins->reload(lib->plugins, NULL);
 				}
@@ -307,19 +360,38 @@ int main(int argc, char *argv[])
 	struct utsname utsname;
 	level_t levels[DBG_MAX];
 	bool use_syslog = FALSE;
+	char *integrity_path = argv[0];
 
 	/* logging for library during initialization, as we have no bus yet */
 	dbg = dbg_stderr;
 
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE
+	if (!enter_executable_dir(argv[0]))
+	{
+		return SS_RC_INITIALIZATION_FAILED;
+	}
+	integrity_path = "charon";
+#endif
+
 	/* initialize library */
-	if (!library_init(NULL, "charon"))
+	if (!library_init(
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE
+			getenv("STRONGSWAN_CONF") ? NULL : "strongswan.conf",
+#else
+			NULL,
+#endif
+			"charon"))
 	{
 		library_deinit();
 		exit(SS_RC_LIBSTRONGSWAN_INTEGRITY);
 	}
 
+#ifdef USE_KERNEL_LIBIPSEC_SOCKS_PORTABLE
+	set_portable_defaults();
+#endif
+
 	if (lib->integrity &&
-		!lib->integrity->check_file(lib->integrity, "charon", argv[0]))
+		!lib->integrity->check_file(lib->integrity, "charon", integrity_path))
 	{
 		dbg_stderr(DBG_DMN, 1, "integrity check of charon failed");
 		library_deinit();
