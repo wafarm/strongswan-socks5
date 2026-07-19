@@ -83,3 +83,56 @@ This avoids filesystem includes and lets `charon` use the plugin list compiled
 by the selected build options.  The stock `strongswan.conf` uses modular
 includes such as `strongswan.d/charon/*.conf`; if that file is deployed instead,
 the referenced `strongswan.d` hierarchy must accompany the executables.
+
+## systemd
+
+The `strongswan-socks-portable@.service` template starts a bundle at any
+absolute path, waits for its adjacent VICI socket, and loads its
+`swanctl.conf`.  Install and start it with:
+
+```sh
+sudo install -m 0644 init/systemd/strongswan-socks-portable@.service \
+    /etc/systemd/system/
+
+BUNDLE=/opt/strongswan-socks
+UNIT=$(systemd-escape --path \
+    --template=strongswan-socks-portable@.service "$BUNDLE")
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now "$UNIT"
+```
+
+Use `systemctl reload "$UNIT"` to reload `strongswan.conf`, connections, and
+credentials.  To initiate a connection automatically when the service starts,
+set `start_action = start` in its child configuration in `swanctl.conf`.
+
+### User service
+
+The SOCKS5 data plane can run without elevated capabilities when the portable
+defaults are retained: it uses unprivileged IKE ports, UDP-encapsulated ESP,
+does not create a TUN device, and does not install addresses or routes.  Put the
+bundle in a directory owned and writable by the user because `charon.pid` and
+`charon.vici` are created in it.  Then install the user-service variant:
+
+```sh
+install -d -m 0755 "$HOME/.config/systemd/user"
+install -m 0644 init/systemd/strongswan-socks-portable-user@.service \
+    "$HOME/.config/systemd/user/"
+
+BUNDLE="$HOME/.local/lib/strongswan-socks"
+UNIT=$(systemd-escape --path \
+    --template=strongswan-socks-portable-user@.service "$BUNDLE")
+
+systemctl --user daemon-reload
+systemctl --user enable --now "$UNIT"
+```
+
+Inspect it with `systemctl --user status "$UNIT"` and
+`journalctl --user-unit="$UNIT" -f`.  A user manager normally stops after the
+last login session ends.  To start the service at boot and keep it running
+after logout, enable lingering with `sudo loginctl enable-linger "$USER"`.
+
+Do not override `charon.port` or `charon.port_nat_t` with privileged ports and
+do not enable `charon.plugins.kernel-libipsec.raw_esp` in a user service.  Stop
+any system-scope instance that listens on the same SOCKS5 address (port 1080 by
+default), or configure distinct listener ports.

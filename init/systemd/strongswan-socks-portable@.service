@@ -1,0 +1,22 @@
+[Unit]
+Description=strongSwan portable SOCKS5 IKE daemon at %I
+After=network-online.target
+Wants=network-online.target
+ConditionFileIsExecutable=%I/charon
+ConditionFileIsExecutable=%I/swanctl
+ConditionPathExists=%I/strongswan.conf
+ConditionPathExists=%I/swanctl.conf
+
+[Service]
+Type=simple
+WorkingDirectory=%I
+ExecStart=%I/charon
+ExecStartPost=/bin/sh -c 'n=0; while [ ! -S "$$1/charon.vici" ]; do n=$$((n + 1)); [ "$$n" -ge 30 ] && exit 1; sleep 1; done; exec "$$1/swanctl" --load-all --noprompt' sh %I
+ExecReload=%I/swanctl --reload
+ExecReload=%I/swanctl --load-all --noprompt
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target
