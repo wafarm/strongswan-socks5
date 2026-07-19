@@ -983,13 +983,6 @@ AC_COMPILE_IFELSE(
 )
 AM_CONDITIONAL(USE_WINDOWS, [test "x$windows" = xtrue])
 
-if test x$kernel_libipsec_socks_portable = xtrue -a x$windows = xtrue; then
-	AC_MSG_ERROR([--enable-kernel-libipsec-socks-portable is only supported on POSIX platforms])
-fi
-if test x$kernel_libipsec_socks = xtrue -a x$windows = xtrue; then
-	AC_MSG_ERROR([--enable-kernel-libipsec-socks is only supported on POSIX platforms])
-fi
-
 AC_MSG_CHECKING([for working __attribute__((packed))])
 AC_COMPILE_IFELSE(
 	[AC_LANG_PROGRAM([], [[

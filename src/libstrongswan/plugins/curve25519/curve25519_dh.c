@@ -152,7 +152,7 @@ curve25519_dh_t *curve25519_dh_create(key_exchange_method_t group)
 
 	if (group != CURVE_25519)
 	{
-		return FALSE;
+		return NULL;
 	}
 
 	INIT(this,

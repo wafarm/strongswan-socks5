@@ -4,8 +4,8 @@
 profile for the kernel-libipsec SOCKS5 data plane.  It enables
 `kernel-libipsec-socks`, `charon`, `swanctl`, VICI, and the `dns-over-tls`
 gateway resolver (and the existing kernel-libipsec dependencies).  Explicitly
-disabling any of these components is a configuration error.  The profile is not
-supported for Windows targets.
+disabling any of these components is a configuration error.  The profile is
+also built in the MSYS2 environment on Windows.
 
 The profile does not select static or monolithic linking and does not change
 plugin installation.  Use the existing build options and packaging appropriate
