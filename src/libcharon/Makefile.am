@@ -719,6 +719,13 @@ if MONOLITHIC
 endif
 endif
 
+if USE_DNS_OVER_TLS
+  SUBDIRS += plugins/dns_over_tls
+if MONOLITHIC
+  libcharon_la_LIBADD += plugins/dns_over_tls/libstrongswan-dns-over-tls.la
+endif
+endif
+
 if USE_ATTR
   SUBDIRS += plugins/attr
 if MONOLITHIC
@@ -761,4 +768,8 @@ endif
 
 if USE_KERNEL_LIBIPSEC_SOCKS
   SUBDIRS += plugins/kernel_libipsec/tests
+endif
+
+if USE_DNS_OVER_TLS
+  SUBDIRS += plugins/dns_over_tls/tests
 endif

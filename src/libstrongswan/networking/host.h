@@ -162,6 +162,21 @@ host_t *host_create_from_string_and_family(char *string, int family,
 host_t *host_create_from_dns(char *string, int family, uint16_t port);
 
 /**
+ * Constructor to create a host_t from a DNS name using a resolver URI.
+ *
+ * Numeric addresses are parsed directly. Hostnames are only passed to the
+ * matching URI resolver provider and never to the system resolver.
+ *
+ * @param string		hostname or numeric address
+ * @param family		family to prefer, 0 for first match
+ * @param port			port number
+ * @param resolver_uri	resolver provider URI
+ * @return				host_t, NULL if lookup failed
+ */
+host_t *host_create_from_dns_with_uri(char *string, int family, uint16_t port,
+								  char *resolver_uri);
+
+/**
  * Constructor to create a host_t object from an address chunk.
  *
  * If family is AF_UNSPEC, it is guessed using address.len.

@@ -25,6 +25,30 @@
 #include "host.h"
 
 typedef struct host_resolver_t host_resolver_t;
+typedef struct host_resolver_provider_t host_resolver_provider_t;
+
+/**
+ * Resolver provider for URI schemes.
+ *
+ * Providers are called by one of the resolver's worker threads.  A provider
+ * has to remain valid until it is removed from the resolver.
+ */
+struct host_resolver_provider_t {
+
+	/** URI scheme handled by this provider (without ://). */
+	char *scheme;
+
+	/**
+	 * Resolve a host using the supplied resolver URI.
+	 *
+	 * @param uri		complete resolver URI
+	 * @param name		name to lookup
+	 * @param family	requested address family
+	 * @return			resolved host or NULL if the lookup failed
+	 */
+	host_t *(*resolve)(host_resolver_provider_t *this, char *uri, char *name,
+					   int family);
+};
 
 /**
  * Resolve hosts by DNS name but do so in a separate thread (calling
@@ -41,6 +65,40 @@ struct host_resolver_t {
 	 * @return			resolved host or NULL if failed or canceled
 	 */
 	host_t *(*resolve)(host_resolver_t *this, char *name, int family);
+
+	/**
+	 * Resolve a host using a provider selected by the resolver URI scheme.
+	 *
+	 * This never falls back to the system resolver if the URI is invalid, no
+	 * provider is registered, or the provider fails.
+	 *
+	 * @param uri		resolver URI
+	 * @param name		name to lookup
+	 * @param family	requested address family
+	 * @return			resolved host or NULL if failed or canceled
+	 */
+	host_t *(*resolve_with_uri)(host_resolver_t *this, char *uri, char *name,
+							int family);
+
+	/**
+	 * Register a scheme-based resolver provider.
+	 *
+	 * @param provider	provider to register
+	 * @return			TRUE if registered, FALSE if invalid/already registered
+	 */
+	bool (*add_provider)(host_resolver_t *this,
+						 host_resolver_provider_t *provider);
+
+	/**
+	 * Remove a resolver provider.
+	 *
+	 * This call waits until all queued or active callbacks for the provider
+	 * have completed.
+	 *
+	 * @param provider	provider to remove
+	 */
+	void (*remove_provider)(host_resolver_t *this,
+						  host_resolver_provider_t *provider);
 
 	/**
 	 * Flush the queue of queries. No new queries will be accepted afterwards.

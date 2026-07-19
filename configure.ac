@@ -237,6 +237,7 @@ ARG_ENABL_SET([stroke],         [enable the stroke configuration backend.])
 ARG_ENABL_SET([smp],            [enable SMP configuration and control interface. Requires libxml.])
 ARG_ENABL_SET([sql],            [enable SQL database configuration backend.])
 ARG_DISBL_SET([vici],           [disable strongSwan IKE generic IPC interface plugin.])
+ARG_ENABL_SET([dns-over-tls],   [enable DNS-over-TLS resolver plugin for IKE gateways.])
 # attribute provider/consumer plugins
 ARG_ENABL_SET([android-dns],    [enable Android specific DNS handler.])
 ARG_DISBL_SET([attr],           [disable strongswan.conf based configuration attribute plugin.])
@@ -449,12 +450,16 @@ if test x$kernel_libipsec_socks_portable = xtrue; then
 	if test x$vici_given = xtrue -a x$vici = xfalse; then
 		AC_MSG_ERROR([--enable-kernel-libipsec-socks-portable conflicts with --disable-vici])
 	fi
+	if test x$dns_over_tls_given = xtrue -a x$dns_over_tls = xfalse; then
+		AC_MSG_ERROR([--enable-kernel-libipsec-socks-portable conflicts with --disable-dns-over-tls])
+	fi
 	kernel_libipsec_socks=true;
 	kernel_libipsec=true;
 	libipsec=true;
 	charon=true;
 	swanctl=true;
 	vici=true;
+	dns_over_tls=true;
 fi
 
 if test x$kernel_libipsec_socks = xtrue; then
@@ -488,7 +493,7 @@ if test x$tnc_imc = xtrue -o x$tnc_imv = xtrue -o x$tnccs_11 = xtrue -o x$tnccs_
 	tnc_tnccs=true;
 fi
 
-if test x$eap_tls = xtrue -o x$eap_ttls = xtrue -o x$eap_peap = xtrue -o x$tnc_tnccs = xtrue -o x$pki = xtrue; then
+if test x$eap_tls = xtrue -o x$eap_ttls = xtrue -o x$eap_peap = xtrue -o x$tnc_tnccs = xtrue -o x$pki = xtrue -o x$dns_over_tls = xtrue; then
 	tls=true;
 fi
 
@@ -1663,6 +1668,7 @@ ADD_PLUGIN([kernel-pfroute],       [c charon nm cmd])
 ADD_PLUGIN([kernel-netlink],       [c charon nm cmd])
 ADD_PLUGIN([selinux],              [c charon nm cmd])
 ADD_PLUGIN([resolve],              [c charon cmd])
+ADD_PLUGIN([dns-over-tls],         [c charon])
 ADD_PLUGIN([save-keys],            [c])
 ADD_PLUGIN([socket-default],       [c charon nm cmd])
 ADD_PLUGIN([socket-dynamic],       [c charon cmd])
@@ -1904,6 +1910,7 @@ AM_CONDITIONAL(USE_FARP, test x$farp = xtrue)
 AM_CONDITIONAL(USE_ADDRBLOCK, test x$addrblock = xtrue)
 AM_CONDITIONAL(USE_UNITY, test x$unity = xtrue)
 AM_CONDITIONAL(USE_RESOLVE, test x$resolve = xtrue)
+AM_CONDITIONAL(USE_DNS_OVER_TLS, test x$dns_over_tls = xtrue)
 AM_CONDITIONAL(USE_ATTR, test x$attr = xtrue)
 AM_CONDITIONAL(USE_ATTR_SQL, test x$attr_sql = xtrue)
 AM_CONDITIONAL(USE_COUNTERS, test x$counters = xtrue)
@@ -2229,6 +2236,8 @@ AC_CONFIG_FILES([
 	src/libcharon/plugins/dhcp/Makefile
 	src/libcharon/plugins/load_tester/Makefile
 	src/libcharon/plugins/resolve/Makefile
+	src/libcharon/plugins/dns_over_tls/Makefile
+	src/libcharon/plugins/dns_over_tls/tests/Makefile
 	src/libcharon/plugins/attr/Makefile
 	src/libcharon/plugins/attr_sql/Makefile
 	src/libcharon/plugins/selinux/Makefile

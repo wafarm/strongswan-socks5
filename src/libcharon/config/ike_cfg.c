@@ -166,17 +166,31 @@ METHOD(ike_cfg_t, childless, childless_t,
 /**
  * Common function for resolve_me/other
  */
-static host_t* resolve(linked_list_t *hosts, int family, uint16_t port)
+static host_t* resolve(linked_list_t *hosts, int family, uint16_t port,
+					   bool gateway)
 {
 	enumerator_t *enumerator;
 	host_t *host = NULL;
 	bool tried = FALSE;
 	char *str;
+	char *uri = NULL;
+
+	if (gateway)
+	{
+		uri = lib->settings->get_str(lib->settings,
+									"%s.host_resolver.dot_server", NULL,
+									lib->ns);
+		if (uri && !*uri)
+		{
+			uri = NULL;
+		}
+	}
 
 	enumerator = hosts->create_enumerator(hosts);
 	while (enumerator->enumerate(enumerator, &str))
 	{
-		host = host_create_from_dns(str, family, port);
+		host = uri ? host_create_from_dns_with_uri(str, family, port, uri) :
+					 host_create_from_dns(str, family, port);
 		if (host)
 		{
 			break;
@@ -197,13 +211,13 @@ static host_t* resolve(linked_list_t *hosts, int family, uint16_t port)
 METHOD(ike_cfg_t, resolve_me, host_t*,
 	private_ike_cfg_t *this, int family)
 {
-	return resolve(this->my_hosts, family, this->my_port);
+	return resolve(this->my_hosts, family, this->my_port, FALSE);
 }
 
 METHOD(ike_cfg_t, resolve_other, host_t*,
 	private_ike_cfg_t *this, int family)
 {
-	return resolve(this->other_hosts, family, this->other_port);
+	return resolve(this->other_hosts, family, this->other_port, TRUE);
 }
 
 /**

@@ -38,6 +38,15 @@
 #define NEW_QUERY_WAIT_TIMEOUT 30
 
 typedef struct private_host_resolver_t private_host_resolver_t;
+typedef struct provider_entry_t provider_entry_t;
+
+/**
+ * Registered resolver provider, retained while queries reference it.
+ */
+struct provider_entry_t {
+	host_resolver_provider_t *provider;
+	u_int refs;
+};
 
 /**
  * Private data of host_resolver_t
@@ -68,6 +77,12 @@ struct private_host_resolver_t {
 	 * Condvar to signal arrival of new queries
 	 */
 	condvar_t *new_query;
+
+	/** Condvar signaled when a query releases a provider */
+	condvar_t *provider_released;
+
+	/** Registered URI resolver providers, provider_entry_t* */
+	linked_list_t *providers;
 
 	/**
 	 * Minimum number of resolver threads
@@ -106,6 +121,10 @@ typedef struct {
 	char *name;
 	/** address family we request */
 	int family;
+	/** resolver URI, NULL for the system resolver */
+	char *uri;
+	/** retained provider entry, NULL for the system resolver */
+	provider_entry_t *provider;
 	/** Condvar to signal completion of a query */
 	condvar_t *done;
 	/** refcount */
@@ -124,17 +143,9 @@ static void query_destroy(query_t *this)
 		DESTROY_IF(this->result);
 		this->done->destroy(this->done);
 		free(this->name);
+		free(this->uri);
 		free(this);
 	}
-}
-
-/**
- * Signals all waiting threads and destroys the query
- */
-static void query_signal_and_destroy(query_t *this)
-{
-	this->done->broadcast(this->done);
-	query_destroy(this);
 }
 
 /**
@@ -142,8 +153,15 @@ static void query_signal_and_destroy(query_t *this)
  */
 static u_int query_hash(query_t *this)
 {
-	return chunk_hash_inc(chunk_create(this->name, strlen(this->name)),
-						  chunk_hash(chunk_from_thing(this->family)));
+	u_int hash;
+
+	hash = chunk_hash(chunk_from_thing(this->family));
+	hash = chunk_hash_inc(chunk_from_thing(this->provider), hash);
+	if (this->uri)
+	{
+		hash = chunk_hash_inc(chunk_create(this->uri, strlen(this->uri)), hash);
+	}
+	return chunk_hash_inc(chunk_create(this->name, strlen(this->name)), hash);
 }
 
 /**
@@ -151,7 +169,56 @@ static u_int query_hash(query_t *this)
  */
 static bool query_equals(query_t *this, query_t *other)
 {
-	return this->family == other->family && streq(this->name, other->name);
+	return this->family == other->family &&
+		   this->provider == other->provider &&
+		   ((!this->uri && !other->uri) ||
+			(this->uri && other->uri && streq(this->uri, other->uri))) &&
+		   streq(this->name, other->name);
+}
+
+/**
+ * Release the provider retained by a query.  Caller holds resolver mutex.
+ */
+static void query_release_provider(private_host_resolver_t *this,
+								   query_t *query)
+{
+	if (query->provider)
+	{
+		query->provider->refs--;
+		query->provider = NULL;
+		this->provider_released->broadcast(this->provider_released);
+	}
+}
+
+/**
+ * Destroy a queued query while holding the resolver mutex.
+ */
+static void query_destroy_queued(private_host_resolver_t *this, query_t *query)
+{
+	query_release_provider(this, query);
+	query_destroy(query);
+}
+
+typedef struct {
+	private_host_resolver_t *resolver;
+	query_t *query;
+} query_cleanup_t;
+
+/**
+ * Clean up an active query if a resolver thread is canceled.
+ */
+static void query_cancel(query_cleanup_t *cleanup)
+{
+	private_host_resolver_t *this = cleanup->resolver;
+	query_t *query = cleanup->query;
+
+	this->mutex->lock(this->mutex);
+	this->busy_threads--;
+	this->queries->remove(this->queries, query);
+	query_release_provider(this, query);
+	query->done->broadcast(query->done);
+	this->mutex->unlock(this->mutex);
+	query_destroy(query);
 }
 
 /**
@@ -161,6 +228,7 @@ static void *resolve_hosts(private_host_resolver_t *this)
 {
 	struct addrinfo hints, *result;
 	query_t *query;
+	query_cleanup_t cleanup;
 	int error;
 	bool old, timed_out;
 
@@ -199,19 +267,37 @@ static void *resolve_hosts(private_host_resolver_t *this)
 		this->busy_threads++;
 		this->mutex->unlock(this->mutex);
 
-		memset(&hints, 0, sizeof(hints));
-		hints.ai_family = query->family;
-		hints.ai_socktype = SOCK_DGRAM;
-
-		thread_cleanup_push((thread_cleanup_t)query_signal_and_destroy, query);
+		cleanup = (query_cleanup_t){ this, query };
+		thread_cleanup_push((thread_cleanup_t)query_cancel, &cleanup);
 		old = thread_cancelability(TRUE);
-		error = getaddrinfo(query->name, NULL, &hints, &result);
+		if (query->provider)
+		{
+			query->result = query->provider->provider->resolve(
+					query->provider->provider, query->uri, query->name,
+					query->family);
+			error = query->result ? 0 : EAI_FAIL;
+		}
+		else
+		{
+			memset(&hints, 0, sizeof(hints));
+			hints.ai_family = query->family;
+			hints.ai_socktype = SOCK_DGRAM;
+			error = getaddrinfo(query->name, NULL, &hints, &result);
+		}
 		thread_cancelability(old);
 		thread_cleanup_pop(FALSE);
 
 		this->mutex->lock(this->mutex);
 		this->busy_threads--;
-		if (error != 0)
+		if (query->provider)
+		{
+			if (error != 0)
+			{
+				DBG1(DBG_LIB, "resolving '%s' via '%s' failed", query->name,
+					 query->uri);
+			}
+		}
+		else if (error != 0)
 		{
 			DBG1(DBG_LIB, "resolving '%s' failed: %s", query->name,
 				 gai_strerror(error));
@@ -222,6 +308,7 @@ static void *resolve_hosts(private_host_resolver_t *this)
 			freeaddrinfo(result);
 		}
 		this->queries->remove(this->queries, query);
+		query_release_provider(this, query);
 		query->done->broadcast(query->done);
 		this->mutex->unlock(this->mutex);
 		query_destroy(query);
@@ -229,13 +316,48 @@ static void *resolve_hosts(private_host_resolver_t *this)
 	return NULL;
 }
 
-METHOD(host_resolver_t, resolve, host_t*,
-	private_host_resolver_t *this, char *name, int family)
+/**
+ * Find the provider for a URI. Caller holds resolver mutex.
+ */
+static provider_entry_t *find_provider(private_host_resolver_t *this,
+									   char *uri)
+{
+	enumerator_t *enumerator;
+	provider_entry_t *entry, *found = NULL;
+	char *sep;
+	size_t len;
+
+	sep = uri ? strstr(uri, "://") : NULL;
+	if (!sep || sep == uri)
+	{
+		return NULL;
+	}
+	len = sep - uri;
+	enumerator = this->providers->create_enumerator(this->providers);
+	while (enumerator->enumerate(enumerator, &entry))
+	{
+		if (strlen(entry->provider->scheme) == len &&
+			strneq(entry->provider->scheme, uri, len))
+		{
+			found = entry;
+			break;
+		}
+	}
+	enumerator->destroy(enumerator);
+	return found;
+}
+
+/**
+ * Queue and wait for a system or provider-based lookup.
+ */
+static host_t *resolve_(private_host_resolver_t *this, char *uri, char *name,
+						int family)
 {
 	query_t *query, lookup = {
 		.name = name,
 		.family = family,
 	};
+	provider_entry_t *provider = NULL;
 	host_t *result;
 	struct in_addr addr;
 
@@ -262,15 +384,34 @@ METHOD(host_resolver_t, resolve, host_t*,
 		this->mutex->unlock(this->mutex);
 		return NULL;
 	}
+	if (uri)
+	{
+		provider = find_provider(this, uri);
+		if (!provider)
+		{
+			this->mutex->unlock(this->mutex);
+			DBG1(DBG_LIB, "resolving '%s' failed: no provider for resolver "
+				 "URI '%s'", name, uri);
+			return NULL;
+		}
+		lookup.uri = uri;
+		lookup.provider = provider;
+	}
 	query = this->queries->get(this->queries, &lookup);
 	if (!query)
 	{
 		INIT(query,
 			.name = strdup(name),
 			.family = family,
+			.uri = uri ? strdup(uri) : NULL,
+			.provider = provider,
 			.done = condvar_create(CONDVAR_TYPE_DEFAULT),
 			.refcount = 1,
 		);
+		if (provider)
+		{
+			provider->refs++;
+		}
 		this->queries->put(this->queries, query, query);
 		this->queue->insert_last(this->queue, query);
 		this->new_query->signal(this->new_query);
@@ -295,18 +436,98 @@ METHOD(host_resolver_t, resolve, host_t*,
 	else
 	{
 		DBG1(DBG_LIB, "resolving '%s' failed: no resolver threads", query->name);
-		/* this should always be the case if we end up here, but make sure */
-		if (query->refcount == 1)
-		{
-			this->queries->remove(this->queries, query);
-			this->queue->remove_last(this->queue, (void**)&query);
-		}
+		/* We still hold the mutex, so this newly queued query has no other
+		 * waiters and may be removed synchronously. */
+		this->queries->remove(this->queries, query);
+		this->queue->remove_last(this->queue, (void**)&query);
+		query_release_provider(this, query);
+		query_destroy(query);
 	}
 	this->mutex->unlock(this->mutex);
 
 	result = query->result ? query->result->clone(query->result) : NULL;
 	query_destroy(query);
 	return result;
+}
+
+METHOD(host_resolver_t, resolve, host_t*,
+	private_host_resolver_t *this, char *name, int family)
+{
+	return resolve_(this, NULL, name, family);
+}
+
+METHOD(host_resolver_t, resolve_with_uri, host_t*,
+	private_host_resolver_t *this, char *uri, char *name, int family)
+{
+	if (!uri || !*uri)
+	{
+		DBG1(DBG_LIB, "resolving '%s' failed: invalid empty resolver URI", name);
+		return NULL;
+	}
+	return resolve_(this, uri, name, family);
+}
+
+METHOD(host_resolver_t, add_provider, bool,
+	private_host_resolver_t *this, host_resolver_provider_t *provider)
+{
+	provider_entry_t *entry;
+
+	if (!provider || !provider->scheme || !*provider->scheme ||
+		!provider->resolve || strstr(provider->scheme, "://"))
+	{
+		return FALSE;
+	}
+	INIT(entry,
+		.provider = provider,
+	);
+	this->mutex->lock(this->mutex);
+	/* find_provider() expects a complete URI, check schemes directly */
+	{
+		enumerator_t *enumerator;
+		provider_entry_t *current;
+
+		enumerator = this->providers->create_enumerator(this->providers);
+		while (enumerator->enumerate(enumerator, &current))
+		{
+			if (streq(current->provider->scheme, provider->scheme))
+			{
+				enumerator->destroy(enumerator);
+				this->mutex->unlock(this->mutex);
+				free(entry);
+				return FALSE;
+			}
+		}
+		enumerator->destroy(enumerator);
+	}
+	this->providers->insert_last(this->providers, entry);
+	this->mutex->unlock(this->mutex);
+	return TRUE;
+}
+
+METHOD(host_resolver_t, remove_provider, void,
+	private_host_resolver_t *this, host_resolver_provider_t *provider)
+{
+	provider_entry_t *entry = NULL, *current;
+	enumerator_t *enumerator;
+
+	this->mutex->lock(this->mutex);
+	enumerator = this->providers->create_enumerator(this->providers);
+	while (enumerator->enumerate(enumerator, &current))
+	{
+		if (current->provider == provider)
+		{
+			this->providers->remove_at(this->providers, enumerator);
+			entry = current;
+			break;
+		}
+	}
+	enumerator->destroy(enumerator);
+	while (entry && entry->refs)
+	{
+		this->provider_released->wait(this->provider_released, this->mutex);
+	}
+	this->mutex->unlock(this->mutex);
+	free(entry);
 }
 
 METHOD(host_resolver_t, flush, void,
@@ -323,7 +544,11 @@ METHOD(host_resolver_t, flush, void,
 		query->done->broadcast(query->done);
 	}
 	enumerator->destroy(enumerator);
-	this->queue->destroy_function(this->queue, (void*)query_destroy);
+	while (this->queue->remove_first(this->queue, (void**)&query) == SUCCESS)
+	{
+		query_destroy_queued(this, query);
+	}
+	this->queue->destroy(this->queue);
 	this->queue = linked_list_create();
 	this->disabled = TRUE;
 	/* this will already terminate most idle threads */
@@ -345,6 +570,8 @@ METHOD(host_resolver_t, destroy, void,
 	this->pool->destroy(this->pool);
 	this->queue->destroy(this->queue);
 	this->queries->destroy(this->queries);
+	this->providers->destroy_function(this->providers, free);
+	this->provider_released->destroy(this->provider_released);
 	this->new_query->destroy(this->new_query);
 	this->mutex->destroy(this->mutex);
 	free(this);
@@ -360,6 +587,9 @@ host_resolver_t *host_resolver_create()
 	INIT(this,
 		.public = {
 			.resolve = _resolve,
+			.resolve_with_uri = _resolve_with_uri,
+			.add_provider = _add_provider,
+			.remove_provider = _remove_provider,
 			.flush = _flush,
 			.destroy = _destroy,
 		},
@@ -367,8 +597,10 @@ host_resolver_t *host_resolver_create()
 									(hashtable_equals_t)query_equals, 8),
 		.queue = linked_list_create(),
 		.pool = linked_list_create(),
+		.providers = linked_list_create(),
 		.mutex = mutex_create(MUTEX_TYPE_DEFAULT),
 		.new_query = condvar_create(CONDVAR_TYPE_DEFAULT),
+		.provider_released = condvar_create(CONDVAR_TYPE_DEFAULT),
 	);
 
 	this->min_threads = max(0, lib->settings->get_int(lib->settings,

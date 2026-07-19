@@ -51,6 +51,7 @@ libstrongswan_tests_SOURCES = tests.h tests.c \
   suites/test_serial_gen.c \
   suites/test_serial_parse.c \
   suites/test_host.c \
+  suites/test_host_resolver.c \
   suites/test_auth_cfg.c \
   suites/test_hasher.c \
   suites/test_crypter.c \

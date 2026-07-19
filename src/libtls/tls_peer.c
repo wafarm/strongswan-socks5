@@ -19,8 +19,10 @@
 
 #include "tls_peer.h"
 
+#include <credentials/certificates/x509.h>
 #include <utils/debug.h>
 
+#include <strings.h>
 #include <time.h>
 
 typedef struct private_tls_peer_t private_tls_peer_t;
@@ -169,6 +171,72 @@ struct private_tls_peer_t {
 /* Implemented in tls_server.c */
 bool tls_write_key_share(bio_writer_t **key_share, key_exchange_t *dh);
 public_key_t *tls_find_public_key(auth_cfg_t *peer_auth, identification_t *id);
+
+/**
+ * Match a concrete DNS reference identity against a wildcard DNS-ID.
+ */
+static bool match_dns_wildcard(identification_t *server,
+							   identification_t *presented)
+{
+	chunk_t name, pattern;
+	size_t suffix, label;
+
+	if (server->get_type(server) != ID_FQDN ||
+		presented->get_type(presented) != ID_FQDN)
+	{
+		return FALSE;
+	}
+	name = server->get_encoding(server);
+	pattern = presented->get_encoding(presented);
+	if (pattern.len < 3 || pattern.ptr[0] != '*' || pattern.ptr[1] != '.' ||
+		memchr(pattern.ptr + 1, '*', pattern.len - 1) ||
+		memchr(pattern.ptr, '\0', pattern.len) ||
+		memchr(name.ptr, '\0', name.len))
+	{
+		return FALSE;
+	}
+	suffix = pattern.len - 1;
+	if (name.len <= suffix ||
+		strncasecmp(name.ptr + name.len - suffix, pattern.ptr + 1, suffix))
+	{
+		return FALSE;
+	}
+	label = name.len - suffix;
+	return !memchr(name.ptr, '.', label);
+}
+
+/*
+ * Described in header.
+ */
+bool tls_peer_matches_server(certificate_t *cert, identification_t *server)
+{
+	identification_t *presented;
+	enumerator_t *enumerator;
+	x509_t *x509;
+	bool match = FALSE;
+
+	if (cert->has_subject(cert, server))
+	{
+		return TRUE;
+	}
+	if (server->get_type(server) != ID_FQDN ||
+		cert->get_type(cert) != CERT_X509)
+	{
+		return FALSE;
+	}
+	x509 = (x509_t*)cert;
+	enumerator = x509->create_subjectAltName_enumerator(x509);
+	while (enumerator->enumerate(enumerator, &presented))
+	{
+		if (match_dns_wildcard(server, presented))
+		{
+			match = TRUE;
+			break;
+		}
+	}
+	enumerator->destroy(enumerator);
+	return match;
+}
 
 /**
  * Verify the DH group/key type requested by the server is valid.
@@ -558,7 +626,7 @@ static status_t process_certificate(private_tls_peer_t *this,
 		{
 			if (first)
 			{
-				if (!cert->has_subject(cert, this->server))
+				if (!tls_peer_matches_server(cert, this->server))
 				{
 					DBG1(DBG_TLS, "server certificate does not match to '%Y'",
 						 this->server);
@@ -610,7 +678,10 @@ static status_t process_cert_verify(private_tls_peer_t *this,
 	public_key_t *public;
 	chunk_t msg;
 
-	public = tls_find_public_key(this->server_auth, this->server);
+	/* The server identity was checked against the leaf certificate when it
+	 * was received.  Avoid applying the generic certificate subject matcher
+	 * again here, as it does not implement TLS DNS wildcard semantics. */
+	public = tls_find_public_key(this->server_auth, NULL);
 	if (!public)
 	{
 		DBG1(DBG_TLS, "no trusted certificate found for '%Y' to verify TLS server",
@@ -659,7 +730,7 @@ static status_t process_modp_key_exchange(private_tls_peer_t *this,
 		this->alert->add(this->alert, TLS_FATAL, TLS_INTERNAL_ERROR);
 		return NEED_MORE;
 	}
-	public = tls_find_public_key(this->server_auth, this->server);
+	public = tls_find_public_key(this->server_auth, NULL);
 	if (!public)
 	{
 		DBG1(DBG_TLS, "no TLS public key found for server '%Y'", this->server);
@@ -766,7 +837,7 @@ static status_t process_ec_key_exchange(private_tls_peer_t *this,
 		return NEED_MORE;
 	}
 
-	public = tls_find_public_key(this->server_auth, this->server);
+	public = tls_find_public_key(this->server_auth, NULL);
 	if (!public)
 	{
 		DBG1(DBG_TLS, "no TLS public key found for server '%Y'", this->server);
@@ -1606,7 +1677,7 @@ static status_t send_key_exchange_encrypt(private_tls_peer_t *this,
 		return NEED_MORE;
 	}
 
-	public = tls_find_public_key(this->server_auth, this->server);
+	public = tls_find_public_key(this->server_auth, NULL);
 	if (!public)
 	{
 		DBG1(DBG_TLS, "no TLS public key found for server '%Y'", this->server);

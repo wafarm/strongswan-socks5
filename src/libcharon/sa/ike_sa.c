@@ -2312,11 +2312,22 @@ METHOD(ike_sa_t, reestablish, status_t,
 static host_t *resolve_gateway_id(identification_t *gateway)
 {
 	char gw[BUF_LEN];
+	char *uri;
 	host_t *addr;
 
 	snprintf(gw, sizeof(gw), "%Y", gateway);
 	gw[sizeof(gw)-1] = '\0';
-	addr = host_create_from_dns(gw, AF_UNSPEC, IKEV2_UDP_PORT);
+	uri = lib->settings->get_str(lib->settings,
+								"%s.host_resolver.dot_server", NULL, lib->ns);
+	if (uri && *uri)
+	{
+		addr = host_create_from_dns_with_uri(gw, AF_UNSPEC, IKEV2_UDP_PORT,
+										 uri);
+	}
+	else
+	{
+		addr = host_create_from_dns(gw, AF_UNSPEC, IKEV2_UDP_PORT);
+	}
 	if (!addr)
 	{
 		DBG1(DBG_IKE, "unable to resolve gateway ID '%Y', redirect failed",

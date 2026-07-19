@@ -178,6 +178,24 @@ charon.host_resolver.max_threads = 3
 	Maximum number of concurrent resolver threads (they are terminated if
 	unused).
 
+charon.host_resolver.dot_server
+	Authenticated DNS-over-TLS resolver for IKE gateway hostnames. The required
+	format is _tls://authentication-domain@IP-literal[:port]_, with port 853 as
+	the default. IPv6 literals have to be bracketed, for example
+	_tls://dns.example@[2001:db8::53]:853_. The IP literal avoids bootstrap DNS;
+	the authentication domain is used for SNI and certificate verification.
+
+	If set, gateway hostname lookups (including redirect targets) fail closed on
+	configuration, plugin, TLS, timeout, or DNS errors. No system-DNS fallback is
+	attempted. Numeric gateways bypass DNS. Local addresses and unrelated daemon
+	lookups keep using the system resolver. Trust anchors must be loaded as X.509
+	CA certificates, for example from the swanctl _x509ca_ directory. An empty or
+	unset value disables DNS-over-TLS gateway resolution.
+
+charon.host_resolver.dot_timeout = 5s
+	Absolute timeout for a DNS-over-TLS gateway lookup, including TCP connect,
+	TLS handshake, and all DNS queries and responses.
+
 charon.host_resolver.min_threads = 0
 	Minimum number of resolver threads to keep around.
 

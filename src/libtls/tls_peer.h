@@ -28,6 +28,7 @@ typedef struct tls_peer_t tls_peer_t;
 #include "tls_crypto.h"
 
 #include <library.h>
+#include <credentials/certificates/certificate.h>
 
 /**
  * TLS handshake protocol handler as peer.
@@ -39,6 +40,19 @@ struct tls_peer_t {
 	 */
 	tls_handshake_t handshake;
 };
+
+/**
+ * Check whether a server certificate matches the configured TLS identity.
+ *
+ * In addition to exact subjectAltName matches, this implements DNS wildcard
+ * matching for a complete left-most label.  A wildcard matches exactly one
+ * label, as required for TLS service identity verification.
+ *
+ * @param cert		server certificate
+ * @param server	configured server identity
+ * @return			TRUE if the certificate matches the server identity
+ */
+bool tls_peer_matches_server(certificate_t *cert, identification_t *server);
 
 /**
  * Create a tls_peer instance.

@@ -475,6 +475,26 @@ host_t *host_create_from_dns(char *string, int af, uint16_t port)
 /*
  * Described in header.
  */
+host_t *host_create_from_dns_with_uri(char *string, int af, uint16_t port,
+								  char *resolver_uri)
+{
+	host_t *this;
+
+	this = host_create_from_string_and_family(string, af, port);
+	if (!this && string && string[0] != '%')
+	{
+		this = lib->hosts->resolve_with_uri(lib->hosts, resolver_uri, string, af);
+	}
+	if (this)
+	{
+		this->set_port(this, port);
+	}
+	return this;
+}
+
+/*
+ * Described in header.
+ */
 host_t *host_create_from_chunk(int family, chunk_t address, uint16_t port)
 {
 	private_host_t *this;
