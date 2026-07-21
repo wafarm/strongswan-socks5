@@ -127,6 +127,7 @@ typedef enum {
 	EVENT_PACKET,
 	EVENT_TUNNEL_UP,
 	EVENT_TUNNEL_DOWN,
+	EVENT_IKE_REKEY,
 	EVENT_IKE_DOWN,
 	EVENT_DNS_ADD,
 	EVENT_DNS_REMOVE,
@@ -142,6 +143,10 @@ typedef struct {
 			uint32_t ike_id;
 			uint32_t child_id;
 		} down;
+		struct {
+			uint32_t old_ike_id;
+			uint32_t new_ike_id;
+		} rekey;
 		uint32_t ike_id;
 		struct {
 			uint32_t ike_id;
@@ -1041,6 +1046,53 @@ static void remove_ike(private_kernel_libipsec_socks_t *this, uint32_t ike_id)
 	recompute_selection(this);
 }
 
+/**
+ * Migrate state that follows CHILD_SAs and attributes across an IKE rekey.
+ */
+static void migrate_ike(private_kernel_libipsec_socks_t *this,
+						uint32_t old_ike_id, uint32_t new_ike_id)
+{
+	enumerator_t *enumerator;
+	tunnel_t *tunnel;
+	dns_entry_t *dns;
+	bool changed = FALSE;
+
+	if (old_ike_id == new_ike_id)
+	{
+		return;
+	}
+	enumerator = this->tunnels->create_enumerator(this->tunnels);
+	while (enumerator->enumerate(enumerator, &tunnel))
+	{
+		if (tunnel->ike_id == old_ike_id)
+		{
+			tunnel->ike_id = new_ike_id;
+			changed = TRUE;
+		}
+	}
+	enumerator->destroy(enumerator);
+	enumerator = this->dns->create_enumerator(this->dns);
+	while (enumerator->enumerate(enumerator, &dns))
+	{
+		if (dns->ike_id == old_ike_id)
+		{
+			dns->ike_id = new_ike_id;
+			changed = TRUE;
+		}
+	}
+	enumerator->destroy(enumerator);
+	if (this->selected_ike_id == old_ike_id)
+	{
+		/* Update this before recomputing so existing clients are preserved. */
+		this->selected_ike_id = new_ike_id;
+		changed = TRUE;
+	}
+	if (changed)
+	{
+		recompute_selection(this);
+	}
+}
+
 static void add_dns(private_kernel_libipsec_socks_t *this, uint32_t ike_id,
 					host_t *server)
 {
@@ -1155,6 +1207,28 @@ METHOD(listener_t, child_rekey, bool,
 	/* Add before removing so a normal rekey never creates a no-tunnel gap. */
 	queue_tunnel_up(listener->owner, ike_sa, new);
 	queue_tunnel_down(listener->owner, ike_sa, old);
+	return TRUE;
+}
+
+METHOD(listener_t, ike_rekey, bool,
+	socks_bus_listener_t *listener, ike_sa_t *old, ike_sa_t *new)
+{
+	socks_event_t *event;
+	uint32_t old_ike_id = old->get_unique_id(old);
+	uint32_t new_ike_id = new->get_unique_id(new);
+
+	if (old_ike_id == new_ike_id)
+	{
+		return TRUE;
+	}
+	INIT(event,
+		.type = EVENT_IKE_REKEY,
+		.rekey = {
+			.old_ike_id = old_ike_id,
+			.new_ike_id = new_ike_id,
+		},
+	);
+	enqueue_event(listener->owner, event);
 	return TRUE;
 }
 
@@ -2215,6 +2289,10 @@ static bool process_events(private_kernel_libipsec_socks_t *this)
 			case EVENT_TUNNEL_DOWN:
 				remove_tunnel(this, event->down.ike_id, event->down.child_id);
 				break;
+			case EVENT_IKE_REKEY:
+				migrate_ike(this, event->rekey.old_ike_id,
+							event->rekey.new_ike_id);
+				break;
 			case EVENT_IKE_DOWN:
 				remove_ike(this, event->ike_id);
 				break;
@@ -2591,6 +2669,7 @@ kernel_libipsec_plain_t *kernel_libipsec_socks_create(void)
 		.bus = {
 			.public = {
 				.ike_updown = _ike_updown,
+				.ike_rekey = _ike_rekey,
 				.child_updown = _child_updown,
 				.child_rekey = _child_rekey,
 				.assign_vips = _assign_vips,
